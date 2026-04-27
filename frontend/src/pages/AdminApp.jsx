@@ -67,6 +67,7 @@ function createReportPin(status, active = false) {
 function LoginScreen({ onLogin, loading, error }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   function submit(e) {
     e.preventDefault();
@@ -84,10 +85,29 @@ function LoginScreen({ onLogin, loading, error }) {
             <span>E-mail</span>
             <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Digite seu e-mail" />
           </label>
-          <label>
-            <span>Senha</span>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Digite sua senha" />
-          </label>
+         <label>
+  <span>Senha</span>
+
+  <div className="password-field">
+    <input
+      type={showPassword ? 'text' : 'password'}
+      value={password}
+      onChange={(e) => setPassword(e.target.value)}
+      placeholder="Digite sua senha"
+      autoComplete="current-password"
+    />
+
+    <button
+      type="button"
+      className="password-toggle"
+      onClick={() => setShowPassword((prev) => !prev)}
+      aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+      title={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+    >
+      {showPassword ? '🙈' : '👁️'}
+    </button>
+  </div>
+</label>
           <button className="btn-primary" type="submit" disabled={loading}>{loading ? 'Entrando...' : 'Entrar no painel'}</button>
         </form>
         {error ? <div className="form-message">{error}</div> : null}
