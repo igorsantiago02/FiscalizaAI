@@ -1093,9 +1093,9 @@ Promise.resolve()
   .then(ensureDatabaseReady)
   .then(ensureBootstrapAdmin)
   .then(() => {
-    app.listen(PORT, () => {
-      logger.info(`FiscalizaAI backend em http://localhost:${PORT}`);
-    });
+   app.listen(PORT, '0.0.0.0', () => {
+  logger.info(`FiscalizaAI backend rodando na porta ${PORT}`);
+});
   })
   .catch(error => {
     logger.error({ error }, 'Falha ao iniciar backend');
