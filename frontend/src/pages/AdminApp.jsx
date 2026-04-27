@@ -65,8 +65,8 @@ function createReportPin(status, active = false) {
 }
 
 function LoginScreen({ onLogin, loading, error }) {
-  const [email, setEmail] = useState('admin@fiscalizaai.local');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   function submit(e) {
     e.preventDefault();
@@ -76,17 +76,17 @@ function LoginScreen({ onLogin, loading, error }) {
   return (
     <div className="screen center auth-screen">
       <div className="auth-card">
-        <img src="/logo.svg" alt="FiscalizaAI" className="brand-logo auth-logo" />
+        <img src="/logo.png" alt="FiscalizaAI" className="brand-logo auth-logo" />
         <h1>FiscalizaAI Admin</h1>
         <p>Login administrativo com trilha de auditoria e controle por perfil.</p>
         <form className="auth-form" onSubmit={submit}>
           <label>
             <span>E-mail</span>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@fiscalizaai.local" />
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Digite seu e-mail" />
           </label>
           <label>
             <span>Senha</span>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Digite sua senha" />
           </label>
           <button className="btn-primary" type="submit" disabled={loading}>{loading ? 'Entrando...' : 'Entrar no painel'}</button>
         </form>
