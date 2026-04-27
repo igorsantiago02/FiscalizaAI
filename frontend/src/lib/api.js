@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_URL || 'https://fiscalizaai-backend.onrender.com';const API_BASE = import.meta.env.VITE_API_URL || 'https://fiscalizaai-backend.onrender.com';
+const API_BASE = import.meta.env.VITE_API_URL || 'https://fiscalizaai-backend.onrender.com';
 const TOKEN_KEY = 'fiscalizaai_admin_token';
 const USER_KEY = 'fiscalizaai_admin_user';
 
