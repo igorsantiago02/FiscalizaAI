@@ -751,6 +751,10 @@ app.get('/api/reverse-geocode', async (req, res, next) => {
   }
 });
 
+app.get('/', (req, res) => {
+  res.send('🚀 FiscalizaAI API ONLINE 🔥');
+});
+
 app.get('/api/lookup-cep', async (req, res, next) => {
   try {
     const { cep } = validateSchema(lookupCepQuerySchema, req.query);
