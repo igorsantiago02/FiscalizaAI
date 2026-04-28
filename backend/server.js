@@ -875,6 +875,74 @@ app.get('/api/config', (_, res) => {
 });
 
 
+function buildPublicStatusMessage(status) {
+  const messages = {
+    'Recebida': 'Sua ocorrência foi recebida e aguarda triagem.',
+    'Em análise': 'Sua ocorrência está em análise pela equipe responsável.',
+    'Encaminhada': 'Sua ocorrência foi encaminhada para o setor responsável.',
+    'Em execução': 'Sua ocorrência está em fase de atendimento/execução.',
+    'Resolvida': 'Sua ocorrência foi marcada como resolvida.',
+    'Encerrada': 'Sua ocorrência foi encerrada no sistema.'
+  };
+  return messages[status] || 'Sua ocorrência está em acompanhamento.';
+}
+
+app.get('/api/public/reports/:id', async (req, res, next) => {
+  try {
+    const protocol = String(req.params.id || '').trim().toUpperCase();
+
+    if (!protocol) {
+      throw new AppError('Informe um protocolo para consulta.', 400, true, 'PROTOCOL_REQUIRED');
+    }
+
+    const { rows } = await pool.query(
+      `SELECT
+          id,
+          created_at,
+          updated_at,
+          category,
+          neighborhood,
+          address_label,
+          postal_code,
+          street,
+          district,
+          city,
+          status,
+          priority
+        FROM reports
+       WHERE id = $1
+       LIMIT 1`,
+      [protocol]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        error: 'Protocolo não encontrado.',
+        code: 'REPORT_NOT_FOUND'
+      });
+    }
+
+    const row = rows[0];
+
+    return res.json({
+      id: row.id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      category: row.category,
+      neighborhood: row.neighborhood,
+      addressLabel: row.address_label,
+      postalCode: row.postal_code,
+      street: row.street,
+      district: row.district,
+      city: row.city,
+      status: row.status,
+      priority: row.priority,
+      publicNote: buildPublicStatusMessage(row.status)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 app.get('/api/reports', requireAuth, async (_, res, next) => {
   try {
     res.json(await queryReports());
