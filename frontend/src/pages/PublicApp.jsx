@@ -176,7 +176,7 @@ export function PublicApp() {
         lat: selected.lat,
         lng: selected.lng,
         imageDataUrl,
-    
+        humanConfirmed: true,
         formStartedAt
       });
       setMessage('Ocorrência enviada com sucesso.');
