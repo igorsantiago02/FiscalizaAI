@@ -176,7 +176,7 @@ export function PublicApp() {
         lat: selected.lat,
         lng: selected.lng,
         imageDataUrl,
-        humanConfirmed: true,
+    
         formStartedAt
       });
       setMessage('Ocorrência enviada com sucesso.');
@@ -204,6 +204,7 @@ export function PublicApp() {
           <div className="brand-row">
             <img src="/logo.png" alt="FiscalizaAI" className="brand-logo" />
             <div>
+              <div className="beta-badge">Versão beta • Testes públicos</div>
               <h1>FiscalizaAI</h1>
               <p>Plataforma cidadã de ocorrências urbanas • São Gonçalo do Amarante/RN</p>
             </div>
@@ -284,7 +285,12 @@ export function PublicApp() {
           </form>
           <div className="form-message">{message}</div>
         </section>
-      </main>
+           </main>
+
+           <footer className="site-footer">
+           <p>© 2026 FiscalizaAI / Igor Santiago. Todos os direitos reservados.</p>
+           <span>Plataforma em fase beta para testes públicos em São Gonçalo do Amarante/RN.</span>
+          </footer>
     </div>
   );
 }
