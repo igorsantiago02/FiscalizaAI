@@ -447,6 +447,7 @@ return result;
 async function lookupCep(cep) {
   const clean = cleanCep(cep);
   if (clean.length !== 8) throw invalidCepError();
+
   if (cepLookupCache.has(clean)) return cepLookupCache.get(clean);
 
   const viaCepRes = await fetch(`https://viacep.com.br/ws/${clean}/json/`, {
@@ -454,37 +455,75 @@ async function lookupCep(cep) {
       Accept: 'application/json',
       'User-Agent': 'FiscalizaAI/4.0 (+local-app)'
     }
-  }).catch(() => { throw invalidCepError(); });
+  }).catch(() => {
+    throw invalidCepError();
+  });
 
   if (!viaCepRes.ok) throw invalidCepError();
-  const viaCep = await viaCepRes.json().catch(() => { throw invalidCepError(); });
+
+  const viaCep = await viaCepRes.json().catch(() => {
+    throw invalidCepError();
+  });
+
   if (viaCep?.erro) throw invalidCepError();
 
-  const cityOk = normalizeSimple(viaCep.localidade) === normalizeSimple('São Gonçalo do Amarante')
-    && String(viaCep.uf || '').trim().toUpperCase() === 'RN';
+  const cityOk =
+    normalizeSimple(viaCep.localidade) === normalizeSimple('São Gonçalo do Amarante') &&
+    String(viaCep.uf || '').trim().toUpperCase() === 'RN';
+
   if (!cityOk) throw invalidCepError();
 
-  const query = [viaCep.logradouro, viaCep.bairro, viaCep.localidade, viaCep.uf, clean, 'Brasil']
-    .filter(Boolean)
-    .join(', ');
-  const geo = await searchAddress(query);
-  if (!Number.isFinite(geo.lat) || !Number.isFinite(geo.lng) || !isInsideMunicipality(geo.lat, geo.lng)) {
-    throw invalidCepError();
+  let geo = null;
+
+  const queries = [
+    [viaCep.logradouro, viaCep.bairro, viaCep.localidade, viaCep.uf, 'Brasil'],
+    [viaCep.bairro, viaCep.localidade, viaCep.uf, 'Brasil'],
+    [viaCep.localidade, viaCep.uf, 'Brasil']
+  ]
+    .map(parts => parts.filter(Boolean).join(', '))
+    .filter(Boolean);
+
+  for (const query of queries) {
+    try {
+      const found = await searchAddress(query);
+
+      if (
+        found &&
+        Number.isFinite(found.lat) &&
+        Number.isFinite(found.lng) &&
+        isInsideMunicipality(found.lat, found.lng)
+      ) {
+        geo = found;
+        break;
+      }
+    } catch (error) {
+      logger.warn({ error, query, cep: clean }, 'Nominatim falhou, mas o CEP será aceito pelo ViaCEP');
+    }
   }
 
   const result = {
     postalCode: clean,
-    neighborhood: viaCep.bairro || geo.address.district || '',
-    district: viaCep.bairro || geo.address.district || '',
-    street: viaCep.logradouro || geo.address.street || '',
+    neighborhood: viaCep.bairro || geo?.address?.district || '',
+    district: viaCep.bairro || geo?.address?.district || '',
+    street: viaCep.logradouro || geo?.address?.street || '',
     city: 'São Gonçalo do Amarante',
-    addressLabel: [viaCep.logradouro || geo.address.street || 'Endereço localizado', viaCep.bairro || geo.address.district || '', 'São Gonçalo do Amarante/RN']
-      .filter(Boolean)
-      .join(' • '),
-    displayName: geo.displayName || '',
-    lat: geo.lat,
-    lng: geo.lng
+    addressLabel: [
+      viaCep.logradouro || geo?.address?.street || 'Endereço localizado',
+      viaCep.bairro || geo?.address?.district || '',
+      'São Gonçalo do Amarante/RN'
+    ].filter(Boolean).join(' • '),
+
+    displayName: geo?.displayName || [
+      viaCep.logradouro,
+      viaCep.bairro,
+      'São Gonçalo do Amarante/RN'
+    ].filter(Boolean).join(', '),
+
+    lat: geo?.lat || CONFIG.center.lat,
+    lng: geo?.lng || CONFIG.center.lng,
+    approximate: !geo
   };
+
   cepLookupCache.set(clean, result);
   return result;
 }
