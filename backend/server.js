@@ -415,19 +415,30 @@ async function searchAddress(query) {
 
     if (!response.ok) throw invalidCepError();
     const results = await response.json();
-    const first = results?.[0];
-    if (!first?.lat || !first?.lon) throw invalidCepError();
+if (!Array.isArray(results) || !results.length) throw invalidCepError();
 
-    const lat = Number(first.lat);
-    const lng = Number(first.lon);
-    const result = {
-      lat,
-      lng,
-      displayName: first.display_name || '',
-      address: buildLocationInfoFromAddress(first.address || {}, lat, lng, first.display_name || '')
-    };
-    addressSearchCache.set(key, result);
-    return result;
+const inside = results.find((item) => {
+  const lat = Number(item.lat);
+  const lng = Number(item.lon);
+  return Number.isFinite(lat) && Number.isFinite(lng) && isInsideMunicipality(lat, lng);
+});
+
+const first = inside || results[0];
+
+if (!first?.lat || !first?.lon) throw invalidCepError();
+
+const lat = Number(first.lat);
+const lng = Number(first.lon);
+
+const result = {
+  lat,
+  lng,
+  displayName: first.display_name || '',
+  address: buildLocationInfoFromAddress(first.address || {}, lat, lng, first.display_name || '')
+};
+
+addressSearchCache.set(key, result);
+return result;
   });
 
   return addressSearchSequence;
