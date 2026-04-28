@@ -1093,6 +1093,72 @@ app.patch('/api/admin/users/:id/role', requireAuth, requireRole('superadmin'), a
   }
 });
 
+app.get('/api/version', (_, res) => {
+  res.json({
+    version: 'cep-debug-001',
+    updatedAt: new Date().toISOString()
+  });
+});
+
+app.get('/api/debug-geocode', async (req, res) => {
+  const cep = cleanCep(req.query.cep || '');
+  const lat = Number(req.query.lat || CONFIG.center.lat);
+  const lng = Number(req.query.lng || CONFIG.center.lng);
+
+  const result = {
+    cep,
+    lat,
+    lng,
+    insideMunicipality: isInsideMunicipality(lat, lng),
+    viaCep: null,
+    viaCepError: null,
+    nominatimReverse: null,
+    nominatimReverseError: null
+  };
+
+  try {
+    const viaCepRes = await fetch(`https://viacep.com.br/ws/${cep}/json/`, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'FiscalizaAI/4.0'
+      }
+    });
+
+    result.viaCepStatus = viaCepRes.status;
+    result.viaCep = await viaCepRes.json();
+
+    result.cityOk =
+      normalizeSimple(result.viaCep?.localidade) === normalizeSimple('São Gonçalo do Amarante') &&
+      String(result.viaCep?.uf || '').trim().toUpperCase() === 'RN';
+  } catch (error) {
+    result.viaCepError = {
+      name: error?.name,
+      message: error?.message
+    };
+  }
+
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&addressdetails=1&accept-language=pt-BR&countrycodes=br&zoom=18`;
+
+    const nominatimRes = await fetch(url, {
+      headers: {
+        'User-Agent': 'FiscalizaAI/4.0',
+        Accept: 'application/json'
+      }
+    });
+
+    result.nominatimReverseStatus = nominatimRes.status;
+    result.nominatimReverse = await nominatimRes.json();
+  } catch (error) {
+    result.nominatimReverseError = {
+      name: error?.name,
+      message: error?.message
+    };
+  }
+
+  res.json(result);
+});
+
 app.use((error, req, res, _next) => {
   logger.error({ err: error, reqId: req.id }, 'Unhandled error');
   if (error instanceof AppError) {
