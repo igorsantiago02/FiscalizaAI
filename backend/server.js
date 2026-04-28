@@ -493,15 +493,7 @@ async function reverseGeocode(lat, lng) {
   return reverseGeocodeSequence;
 }
 
-    if (!response.ok) throw new Error(`Falha ao buscar endereço: ${response.status}`);
-    const json = await response.json();
-    const result = buildLocationInfoFromAddress(json.address || {}, lat, lng, json.display_name || '');
-    reverseGeocodeCache.set(key, result);
-    return result;
-  }).catch(() => buildLocationFallback(lat, lng));
 
-  return reverseGeocodeSequence;
-}
 
 async function searchAddress(query) {
   const key = String(query || '').trim();
