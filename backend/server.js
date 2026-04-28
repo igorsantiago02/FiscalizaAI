@@ -377,13 +377,121 @@ async function reverseGeocode(lat, lng) {
     if (wait) await sleep(wait);
     lastReverseGeocodeAt = Date.now();
 
-    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&addressdetails=1&accept-language=pt-BR&countrycodes=br&zoom=18`;
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'FiscalizaAI/4.0 (+local-app)',
-        'Accept': 'application/json'
+    const geoapifyKey = process.env.GEOAPIFY_API_KEY;
+
+    if (geoapifyKey) {
+      try {
+        const url = `https://api.geoapify.com/v1/geocode/reverse?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&lang=pt&apiKey=${encodeURIComponent(geoapifyKey)}`;
+
+        const response = await fetch(url, {
+          headers: {
+            Accept: 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Geoapify falhou: ${response.status}`);
+        }
+
+        const json = await response.json();
+        const props = json?.features?.[0]?.properties;
+
+        if (!props) {
+          throw new Error('Geoapify não retornou endereço.');
+        }
+
+        const streetBase =
+          props.street ||
+          props.name ||
+          props.address_line1 ||
+          '';
+
+        const houseNumber = props.housenumber ? `, ${props.housenumber}` : '';
+
+        const street = streetBase
+          ? `${streetBase}${houseNumber}`
+          : '';
+
+        const district =
+          props.suburb ||
+          props.district ||
+          props.neighbourhood ||
+          props.city_district ||
+          props.county ||
+          '';
+
+        const city =
+          props.city ||
+          props.municipality ||
+          props.county ||
+          'São Gonçalo do Amarante';
+
+        const state = props.state_code || 'RN';
+        const postalCode = props.postcode || '';
+
+        const mainLine =
+          props.address_line1 ||
+          street ||
+          props.formatted ||
+          'Ponto selecionado no mapa';
+
+        const result = {
+          addressLabel: [
+            mainLine,
+            district,
+            `${city}/${state}`
+          ].filter(Boolean).join(' • '),
+
+          postalCode,
+          street,
+          district,
+          city,
+
+          displayName:
+            props.formatted ||
+            [
+              mainLine,
+              district,
+              city,
+              state
+            ].filter(Boolean).join(', ')
+        };
+
+        reverseGeocodeCache.set(key, result);
+        return result;
+      } catch (error) {
+        logger.warn({ error, lat, lng }, 'Geoapify falhou. Tentando fallback com Nominatim.');
       }
-    });
+    }
+
+    try {
+      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lng)}&addressdetails=1&accept-language=pt-BR&countrycodes=br&zoom=18`;
+
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'FiscalizaAI/4.0 (+local-app)',
+          Accept: 'application/json'
+        }
+      });
+
+      if (!response.ok) throw new Error(`Falha ao buscar endereço: ${response.status}`);
+
+      const json = await response.json();
+      const result = buildLocationInfoFromAddress(json.address || {}, lat, lng, json.display_name || '');
+
+      reverseGeocodeCache.set(key, result);
+      return result;
+    } catch (error) {
+      logger.warn({ error, lat, lng }, 'Fallback Nominatim também falhou.');
+      return buildLocationFallback(lat, lng);
+    }
+  }).catch((error) => {
+    logger.warn({ error, lat, lng }, 'Falha geral no reverse geocode.');
+    return buildLocationFallback(lat, lng);
+  });
+
+  return reverseGeocodeSequence;
+}
 
     if (!response.ok) throw new Error(`Falha ao buscar endereço: ${response.status}`);
     const json = await response.json();
