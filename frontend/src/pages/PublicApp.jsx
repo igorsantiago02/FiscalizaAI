@@ -43,6 +43,15 @@ function emptyForm() {
   };
 }
 
+function formatProtocolDate(value) {
+  if (!value) return 'Não informado';
+  try {
+    return new Date(value).toLocaleString('pt-BR');
+  } catch {
+    return 'Não informado';
+  }
+}
+
 export function PublicApp() {
   const [config, setConfig] = useState(null);
   const [metrics, setMetrics] = useState(null);
@@ -55,6 +64,11 @@ export function PublicApp() {
   const [fileInputKey, setFileInputKey] = useState(0);
   const lastCepLookupRef = useRef('');
   const cepLookupTimerRef = useRef(null);
+  const [lastProtocol, setLastProtocol] = useState('');
+  const [protocolQuery, setProtocolQuery] = useState('');
+  const [protocolResult, setProtocolResult] = useState(null);
+  const [protocolLoading, setProtocolLoading] = useState(false);
+  const [protocolMessage, setProtocolMessage] = useState('');
 
   useEffect(() => {
     Promise.all([apiGet('/api/config'), apiGet('/api/metrics')]).then(([cfg, m]) => {
@@ -161,6 +175,33 @@ export function PublicApp() {
     };
   }, [form.postalCode]);
 
+
+  async function searchProtocol(e) {
+    e.preventDefault();
+
+    const protocol = protocolQuery.trim().toUpperCase();
+
+    if (!protocol) {
+      setProtocolResult(null);
+      setProtocolMessage('Digite um protocolo para consultar.');
+      return;
+    }
+
+    setProtocolLoading(true);
+    setProtocolMessage('');
+    setProtocolResult(null);
+
+    try {
+      const data = await apiGet(`/api/public/reports/${encodeURIComponent(protocol)}`);
+      setProtocolResult(data);
+      setProtocolMessage('');
+    } catch (error) {
+      setProtocolMessage(error.message || 'Protocolo não encontrado.');
+    } finally {
+      setProtocolLoading(false);
+    }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (!selected) {
@@ -171,16 +212,36 @@ export function PublicApp() {
     try {
      
       const imageDataUrl = await fileToDataUrl(file);
-      await apiSend('/api/report', 'POST', {
+      const createdReport = await apiSend('/api/report', 'POST', {
         ...form,
         lat: selected.lat,
         lng: selected.lng,
         imageDataUrl,
-    
+        humanConfirmed: true,
         formStartedAt
       });
-      setMessage('Ocorrência enviada com sucesso.');
+
+      const protocol = createdReport?.id || '';
+      setLastProtocol(protocol);
+      if (protocol) {
+        setProtocolQuery(protocol);
+        setProtocolResult({
+          id: protocol,
+          status: createdReport.status,
+          category: createdReport.category,
+          addressLabel: createdReport.addressLabel,
+          neighborhood: createdReport.neighborhood,
+          priority: createdReport.priority,
+          createdAt: createdReport.createdAt,
+          updatedAt: createdReport.updatedAt,
+          publicNote: 'Sua ocorrência foi registrada e será acompanhada pela equipe responsável.'
+        });
+      }
+      setMessage(protocol
+        ? `Ocorrência enviada com sucesso. Protocolo: ${protocol}`
+        : 'Ocorrência enviada com sucesso.');
       setForm(emptyForm());
+      setFormStartedAt(String(Date.now()));
       setFile(null);
       setFileInputKey(prev => prev + 1);
       setSelected(null);
@@ -284,10 +345,73 @@ export function PublicApp() {
             <button type="submit" className="btn-primary submit-report-btn" disabled={submitting}>{submitting ? 'Enviando...' : 'Enviar ocorrência'}</button>
           </form>
           <div className="form-message">{message}</div>
+          {lastProtocol ? (
+            <div className="protocol-success">
+              <span>Protocolo gerado</span>
+              <strong>{lastProtocol}</strong>
+              <small>Guarde esse número para acompanhar o andamento da ocorrência.</small>
+            </div>
+          ) : null}
         </section>
-           </main>
 
-           <footer className="site-footer">
+        <section className="panel protocol-panel">
+          <div className="section-head">
+            <h2>Acompanhar ocorrência</h2>
+            <span>Digite o protocolo recebido após o envio.</span>
+          </div>
+
+          <form className="protocol-form" onSubmit={searchProtocol}>
+            <input
+              value={protocolQuery}
+              onChange={(e) => setProtocolQuery(e.target.value)}
+              placeholder="Ex.: FISC-20260428-0001"
+              maxLength={24}
+            />
+            <button className="btn-secondary" type="submit" disabled={protocolLoading}>
+              {protocolLoading ? 'Consultando...' : 'Consultar'}
+            </button>
+          </form>
+
+          {protocolMessage ? <div className="form-message">{protocolMessage}</div> : null}
+
+          {protocolResult ? (
+            <div className="protocol-result">
+              <div className="protocol-result-head">
+                <div>
+                  <span>Protocolo</span>
+                  <strong>{protocolResult.id}</strong>
+                </div>
+                <span className="protocol-status">{protocolResult.status}</span>
+              </div>
+
+              <div className="protocol-result-grid">
+                <div>
+                  <span>Categoria</span>
+                  <strong>{protocolResult.category || 'Não informado'}</strong>
+                </div>
+                <div>
+                  <span>Prioridade</span>
+                  <strong>{protocolResult.priority || 'Não informado'}</strong>
+                </div>
+                <div className="wide">
+                  <span>Local</span>
+                  <strong>{protocolResult.addressLabel || protocolResult.neighborhood || 'Não informado'}</strong>
+                </div>
+                <div>
+                  <span>Última atualização</span>
+                  <strong>{formatProtocolDate(protocolResult.updatedAt || protocolResult.createdAt)}</strong>
+                </div>
+              </div>
+
+              {protocolResult.publicNote ? (
+                <p className="protocol-note">{protocolResult.publicNote}</p>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+      </main>
+
+      <footer className="site-footer">
            <p>© 2026 FiscalizaAI / Igor Santiago. Todos os direitos reservados.</p>
            <span>Plataforma em fase beta para testes públicos em São Gonçalo do Amarante/RN.</span>
           </footer>
