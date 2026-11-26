@@ -104,10 +104,16 @@ const ALLOWED_ROLES = ['superadmin', 'operator'];
 const ADMIN_BOOTSTRAP = {
   name: process.env.ADMIN_NAME || 'Administrador Principal',
   email: (process.env.ADMIN_EMAIL || 'admin@fiscalizaai.local').trim().toLowerCase(),
-  password: process.env.ADMIN_PASSWORD || 'admin123',
+  // sem senha padrão: o admin inicial só é criado quando ADMIN_PASSWORD está definida no ambiente
+  password: process.env.ADMIN_PASSWORD || '',
   role: ALLOWED_ROLES.includes(process.env.ADMIN_ROLE) ? process.env.ADMIN_ROLE : 'superadmin'
 };
-const JWT_SECRET = process.env.JWT_SECRET || 'fiscalizaai_dev_secret_change_me';
+// sem chave fixa no código: sem JWT_SECRET, usa uma chave aleatória por execução
+// (o servidor continua funcionando, mas as sessões caem a cada reinício)
+const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(48).toString('hex');
+if (!process.env.JWT_SECRET) {
+  logger.warn('JWT_SECRET não definida: usando chave aleatória temporária. Defina JWT_SECRET no ambiente para manter as sessões entre reinícios.');
+}
 const AUTH_COOKIE_NAME = 'fiscalizaai_refresh';
 
 const loginSchema = z.object({
@@ -750,12 +756,16 @@ async function insertAuditLog({ reportId = null, action, beforePayload = null, a
 async function ensureBootstrapAdmin() {
   const { rows } = await pool.query('SELECT id, email FROM admin_users WHERE email = $1 LIMIT 1', [ADMIN_BOOTSTRAP.email]);
   if (!rows.length) {
+    if (ADMIN_BOOTSTRAP.password.length < 8) {
+      logger.warn('Nenhum admin criado: defina ADMIN_EMAIL e ADMIN_PASSWORD (8 caracteres ou mais) no ambiente para criar o admin inicial.');
+      return;
+    }
     const passwordHash = await hashPassword(ADMIN_BOOTSTRAP.password);
     await pool.query(
       'INSERT INTO admin_users (name, email, password_hash, role) VALUES ($1, $2, $3, $4)',
       [ADMIN_BOOTSTRAP.name, ADMIN_BOOTSTRAP.email, passwordHash, ADMIN_BOOTSTRAP.role]
     );
-    logger.warn({ email: ADMIN_BOOTSTRAP.email }, 'Admin padrão criado. Altere a senha após o primeiro acesso.');
+    logger.warn({ email: ADMIN_BOOTSTRAP.email }, 'Admin inicial criado a partir de ADMIN_EMAIL/ADMIN_PASSWORD.');
   }
 }
 
