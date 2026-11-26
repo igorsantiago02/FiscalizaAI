@@ -7,29 +7,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import booleanPointInPolygon from '@turf/boolean-point-in-polygon';
-import { point } from '@turf/helpers';
 import rateLimit from 'express-rate-limit';
 import { v2 as cloudinary } from 'cloudinary';
-import bcrypt from 'bcryptjs';
-import { z } from 'zod';
 import pkg from 'pg';
 import pino from 'pino';
 import pinoHttp from 'pino-http';
+import {
+  AppError, badRequest, criarSchemas, validateSchema, inferPriority, normalizeSimple, cleanCep,
+  lerPoligono, dentroDoPoligono, criarJwt, hashPassword, verifyPassword,
+  parseDataUrlImage as validarImagem, validatePublicFormGuards as validarGuardas, buildPublicStatusMessage
+} from './lib/regras.js';
 
 const { Pool } = pkg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-class AppError extends Error {
-  constructor(message, statusCode = 400, expose = true, code = 'APP_ERROR') {
-    super(message);
-    this.name = 'AppError';
-    this.statusCode = statusCode;
-    this.expose = expose;
-    this.code = code;
-  }
-}
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -72,13 +63,7 @@ cloudinary.config({
 });
 
 const polygonSource = JSON.parse(fs.readFileSync(POLYGON_PATH, 'utf-8'));
-const polygon = polygonSource?.type === 'FeatureCollection'
-  ? polygonSource.features?.[0]?.geometry
-  : (polygonSource?.type === 'Feature' ? polygonSource.geometry : polygonSource);
-
-if (!polygon || !['Polygon', 'MultiPolygon'].includes(polygon.type)) {
-  throw new Error('Arquivo sga-polygon.geojson inválido: esperado Polygon ou MultiPolygon.');
-}
+const polygon = lerPoligono(polygonSource);
 
 const CONFIG = {
   platformName: 'FiscalizaAI',
@@ -116,61 +101,17 @@ if (!process.env.JWT_SECRET) {
 }
 const AUTH_COOKIE_NAME = 'fiscalizaai_refresh';
 
-const loginSchema = z.object({
-  email: z.string().trim().email('Informe um e-mail válido.').max(160),
-  password: z.string().min(8, 'A senha deve ter pelo menos 8 caracteres.').max(128)
-});
+const {
+  loginSchema, createReportSchema, updateReportSchema, createAdminUserSchema,
+  updateRoleSchema, reverseGeocodeQuerySchema, lookupCepQuerySchema
+} = criarSchemas(CONFIG.categories);
 
-const createReportSchema = z.object({
-  reporterName: z.string().trim().max(120).optional().default('Anônimo'),
-  category: z.string().trim().refine(value => CONFIG.categories.includes(value), 'Categoria inválida.'),
-  description: z.string().trim().min(8, 'Descreva melhor a ocorrência.').max(3000),
-  neighborhood: z.string().trim().max(160).optional().default(''),
-  addressLabel: z.string().trim().max(240).optional().default(''),
-  postalCode: z.string().trim().max(9).optional().default(''),
-  street: z.string().trim().max(180).optional().default(''),
-  district: z.string().trim().max(160).optional().default(''),
-  city: z.string().trim().max(120).optional().default('São Gonçalo do Amarante'),
-  imageDataUrl: z.string().optional().default(''),
-  lat: z.coerce.number().finite(),
-  lng: z.coerce.number().finite(),
-  humanConfirmed: z.boolean().optional().default(false),
-  honeypot: z.string().optional().default(''),
-  formStartedAt: z.string().trim().min(4, 'Tempo do formulário inválido.')
-});
+const jwt = criarJwt(JWT_SECRET);
+const signJwt = (payload, expiresInSeconds = ACCESS_TOKEN_TTL_MINUTES * 60) => jwt.sign(payload, expiresInSeconds);
+const verifyJwt = (token) => jwt.verify(token);
+const parseDataUrlImage = (dataUrl) => validarImagem(dataUrl, { maxBytes: MAX_IMAGE_BYTES, allowedMime: ALLOWED_IMAGE_MIME });
+const validatePublicFormGuards = (body) => validarGuardas(body, { minSeconds: PUBLIC_FORM_MIN_SECONDS });
 
-const updateReportSchema = z.object({
-  status: z.enum(['Recebida', 'Em análise', 'Encaminhada', 'Em execução', 'Resolvida', 'Encerrada']).optional(),
-  priority: z.enum(['Baixa', 'Média', 'Alta']).optional(),
-  adminNote: z.string().max(4000).optional(),
-  neighborhood: z.string().max(160).optional(),
-  addressLabel: z.string().max(240).optional(),
-  postalCode: z.string().max(9).optional(),
-  street: z.string().max(180).optional(),
-  district: z.string().max(160).optional(),
-  city: z.string().max(120).optional(),
-  resolutionImageDataUrl: z.string().optional().default('')
-});
-
-const createAdminUserSchema = z.object({
-  name: z.string().trim().min(3).max(140),
-  email: z.string().trim().email().max(160),
-  password: z.string().min(8).max(128),
-  role: z.enum(['superadmin', 'operator']).default('operator')
-});
-
-const updateRoleSchema = z.object({
-  role: z.enum(['superadmin', 'operator'])
-});
-
-const reverseGeocodeQuerySchema = z.object({
-  lat: z.coerce.number().finite(),
-  lng: z.coerce.number().finite()
-});
-
-const lookupCepQuerySchema = z.object({
-  cep: z.string().trim().min(8).max(9)
-});
 
 app.set('trust proxy', 1);
 app.use(helmet({
@@ -213,17 +154,6 @@ const publicReportLimiter = rateLimit({
 });
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-function badRequest(message) { return new AppError(message, 400, true, 'BAD_REQUEST'); }
-
-function validateSchema(schema, payload) {
-  const parsed = schema.safeParse(payload);
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    throw new AppError(issue?.message || 'Dados inválidos.', 400, true, 'VALIDATION_ERROR');
-  }
-  return parsed.data;
-}
-
 function getClientIp(req) {
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded === 'string' && forwarded.trim()) return forwarded.split(',')[0].trim();
@@ -234,31 +164,12 @@ function getUserAgent(req) {
   return String(req.headers['user-agent'] || '').slice(0, 500);
 }
 
-function inferPriority(category, description) {
-  const hay = `${category} ${description}`.toLowerCase();
-  if (/(risco|acidente|poste|alag|esgoto|buraco|queda|choque)/.test(hay)) return 'Alta';
-  if (/(lixo|mato|calçada|animal)/.test(hay)) return 'Média';
-  return 'Baixa';
-}
-
-function normalizeSimple(value) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .trim()
-    .toLowerCase();
-}
-
-function cleanCep(value) {
-  return String(value || '').replace(/\D/g, '').slice(0, 8);
-}
-
 function invalidCepError() {
   return new AppError('CEP não existe ou está fora da delimitação.', 400, true, 'CEP_INVALID');
 }
 
 function isInsideMunicipality(lat, lng) {
-  return booleanPointInPolygon(point([Number(lng), Number(lat)]), polygon);
+  return dentroDoPoligono(polygon, lat, lng);
 }
 
 async function ensureDatabaseReady() {
@@ -266,56 +177,6 @@ async function ensureDatabaseReady() {
     throw new Error('DATABASE_URL não configurado. Configure o Neon/Postgres antes de iniciar o backend.');
   }
   await pool.query('SELECT 1');
-}
-
-function base64url(value) {
-  return Buffer.from(value).toString('base64url');
-}
-
-function signJwt(payload, expiresInSeconds = ACCESS_TOKEN_TTL_MINUTES * 60) {
-  const header = { alg: 'HS256', typ: 'JWT' };
-  const now = Math.floor(Date.now() / 1000);
-  const fullPayload = { ...payload, iat: now, exp: now + expiresInSeconds };
-  const encodedHeader = base64url(JSON.stringify(header));
-  const encodedPayload = base64url(JSON.stringify(fullPayload));
-  const signature = crypto.createHmac('sha256', JWT_SECRET).update(`${encodedHeader}.${encodedPayload}`).digest('base64url');
-  return `${encodedHeader}.${encodedPayload}.${signature}`;
-}
-
-function verifyJwt(token) {
-  if (!token || typeof token !== 'string') throw new Error('Token ausente.');
-  const parts = token.split('.');
-  if (parts.length !== 3) throw new Error('Token inválido.');
-  const [encodedHeader, encodedPayload, signature] = parts;
-  const expected = crypto.createHmac('sha256', JWT_SECRET).update(`${encodedHeader}.${encodedPayload}`).digest('base64url');
-  const a = Buffer.from(signature);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new Error('Assinatura inválida.');
-  const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
-  if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) throw new Error('Token expirado.');
-  return payload;
-}
-
-function hashLegacyPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
-  const derivedKey = crypto.scryptSync(password, salt, 64).toString('hex');
-  return `scrypt:${salt}:${derivedKey}`;
-}
-
-async function hashPassword(password) {
-  return bcrypt.hash(password, 12);
-}
-
-async function verifyPassword(password, storedHash) {
-  const value = String(storedHash || '');
-  if (value.startsWith('$2a$') || value.startsWith('$2b$') || value.startsWith('$2y$')) {
-    return bcrypt.compare(password, value);
-  }
-  const [scheme, salt, hash] = value.split(':');
-  if (scheme !== 'scrypt' || !salt || !hash) return false;
-  const derivedKey = crypto.scryptSync(password, salt, 64).toString('hex');
-  const a = Buffer.from(hash, 'hex');
-  const b = Buffer.from(derivedKey, 'hex');
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 function makeRefreshToken() {
@@ -651,22 +512,6 @@ function normalizeLocationPayload(body) {
   };
 }
 
-function parseDataUrlImage(dataUrl) {
-  if (!dataUrl) return null;
-  if (typeof dataUrl !== 'string') throw badRequest('Imagem inválida.');
-  const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/);
-  if (!match) throw badRequest('Formato de imagem inválido.');
-  const mime = match[1].toLowerCase();
-  if (!ALLOWED_IMAGE_MIME.includes(mime)) {
-    throw badRequest('Formato de imagem não permitido. Use JPG, PNG ou WEBP.');
-  }
-  const bytes = Buffer.byteLength(match[2], 'base64');
-  if (bytes > MAX_IMAGE_BYTES) {
-    throw badRequest(`A imagem excede o limite de ${Math.round(MAX_IMAGE_BYTES / (1024 * 1024))} MB.`);
-  }
-  return { mime, bytes };
-}
-
 async function uploadImageIfPresent(dataUrl, folder) {
   if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
     return { url: '', publicId: '' };
@@ -853,24 +698,6 @@ async function createSessionForUser(user, req, res, rotateFromId = null) {
   return { accessToken, user };
 }
 
-function validatePublicFormGuards(body) {
-  if (String(body.honeypot || '').trim()) {
-    throw new AppError('Envio bloqueado por verificação anti-spam.', 400, true, 'SPAM_HONEYPOT');
-  }
-  const startedAt = Number(body.formStartedAt);
-  if (!Number.isFinite(startedAt)) throw badRequest('Sessão do formulário inválida.');
-  const elapsed = Date.now() - startedAt;
-  if (elapsed < PUBLIC_FORM_MIN_SECONDS * 1000) {
-    throw new AppError('Envio muito rápido. Revise a ocorrência e tente novamente.', 400, true, 'SPAM_TOO_FAST');
-  }
-  if (elapsed > 1000 * 60 * 60 * 2) {
-    throw new AppError('Formulário expirado. Atualize a página e tente novamente.', 400, true, 'FORM_EXPIRED');
-  }
-  if (!body.humanConfirmed) {
-    throw new AppError('Confirme no popup que você não é um robô.', 400, true, 'HUMAN_CONFIRM_REQUIRED');
-  }
-}
-
 app.get('/api/health', async (_, res, next) => {
   try {
     await pool.query('SELECT 1');
@@ -884,18 +711,6 @@ app.get('/api/config', (_, res) => {
   res.json(CONFIG);
 });
 
-
-function buildPublicStatusMessage(status) {
-  const messages = {
-    'Recebida': 'Sua ocorrência foi recebida e aguarda triagem.',
-    'Em análise': 'Sua ocorrência está em análise pela equipe responsável.',
-    'Encaminhada': 'Sua ocorrência foi encaminhada para o setor responsável.',
-    'Em execução': 'Sua ocorrência está em fase de atendimento/execução.',
-    'Resolvida': 'Sua ocorrência foi marcada como resolvida.',
-    'Encerrada': 'Sua ocorrência foi encerrada no sistema.'
-  };
-  return messages[status] || 'Sua ocorrência está em acompanhamento.';
-}
 
 app.get('/api/public/reports/:id', async (req, res, next) => {
   try {
